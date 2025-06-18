@@ -1,0 +1,829 @@
+---
+title: "Transfer -- Developmental Data"
+output: html_document
+date: "2025-06-03"
+---
+
+```{r warning = FALSE, include = FALSE, max.height = '100px'}
+#Load libraries.
+
+library(ggpubr)
+require(readxl)
+library(performance)
+require(DT)
+require(dplyr)
+require(ggplot2)
+require(ggsci)
+require(lme4)
+require(lmerTest)
+require(multcomp)
+require(emmeans)
+library(tidyverse)
+library(BayesFactor)
+library(bayestestR)
+library(broom)
+library(patchwork)
+library(ggridges)
+library(psych)
+library(brms)
+library(reshape2)
+select <- dplyr::select
+
+
+```
+
+
+# Load data 
+```{r}
+
+no_outliers_data_smarte = read_csv("clean_trial_data_smarte_full.csv") %>% 
+    mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7","A"))) 
+
+no_outliers_data = read_csv("clean_trial_data_full.csv") %>% 
+    mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7","A"))) 
+
+```
+
+# Figures and Analyses
+
+## Figure 2 RT and Accuracy Plots
+
+```{r}
+
+
+# Aggregate scores.
+DATASET <- do.call(data.frame, aggregate(Array_Submit_RT ~ Participant + Grade, data = no_outliers_data, FUN = function(x) c(Mean = mean(x), L95 = mean(x) - 1.96 * sd(x) / sqrt(length(x)), U95 = mean(x) + 1.96 * sd(x) / sqrt(length(x))), subset = Array_Correct == 1)) %>% 
+  filter(Array_Submit_RT.Mean<20)
+# Create the plot.
+dot_PLOT <- ggplot(data = DATASET, aes(y = Array_Submit_RT.Mean, x = Grade, color = Grade, fill = Grade)) +
+geom_point(size = 0.50, position = position_jitter(width = .15), alpha = 0.50) +
+geom_boxplot(width = 0.10, outlier.shape = NA, alpha = 0.25) +
+  scale_color_d3() +
+  scale_fill_d3() +
+labs(x = 'Grade', y = '(Correct) Response times') +
+scale_x_discrete() + 
+# scale_y_continuous(breaks = c(0.00,1000,2000,3000,4000,5000,6000,7000)) + 
+# coord_cartesian(ylim = c(0.00, 8000)) +
+  ylim(0, 10)+
+theme(text = element_text(size = 24)) +
+theme_classic() +
+# ggtitle("Mean (correct) RT on Non-Symbolic Problems") +
+theme(legend.position = "bottom")+
+guides(fill = guide_legend(nrow = 1),
+       color = guide_legend(nrow = 1))
+
+# Aggregate scores.
+DATASET <- do.call(data.frame, aggregate(Symb_Submit_RT ~ Participant + Grade, data = no_outliers_data, FUN = function(x) c(Mean = mean(x), L95 = mean(x) - 1.96 * sd(x) / sqrt(length(x)), U95 = mean(x) + 1.96 * sd(x) / sqrt(length(x))), subset = Array_Correct == 1)) %>% 
+  filter(Symb_Submit_RT.Mean<20)
+# Create the plot.
+digit_PLOT <- ggplot(data = DATASET, aes(y = Symb_Submit_RT.Mean, x = Grade, color = Grade, fill = Grade)) +
+geom_point(size = 0.50, position = position_jitter(width = .15), alpha = 0.50) +
+geom_boxplot(width = 0.10, outlier.shape = NA, alpha = 0.25) +
+  scale_color_d3() +
+  scale_fill_d3() +
+labs(x = 'Grade', y = '(Correct) Response times') +
+scale_x_discrete() + 
+# scale_y_continuous(breaks = c(0.00,1000,2000,3000,4000,5000,6000,7000)) + 
+# coord_cartesian(ylim = c(0.00, 8000)) +
+theme(text = element_text(size = 24)) +
+ylim(0, 10)+
+theme_classic() +
+# ggtitle("Mean (correct) RT on Symbolic Problems") +
+theme(legend.position = "bottom")+
+guides(fill = guide_legend(nrow = 1),
+       color = guide_legend(nrow = 1))
+
+
+(dot_PLOT | digit_PLOT)+ 
+  plot_annotation(tag_levels='A')+
+  plot_layout(guides = "collect") & theme(legend.position='bottom',
+                                                          legend.key.size = unit(0.6, 'cm'),
+                                                          legend.text = element_text(size=13),
+                                                          # legend.title = element_text(size=13),
+                                          text = element_text(size = 13),
+                                          plot.tag = element_text(size = 25))
+
+
+
+
+
+```
+
+# Developmental Results
+
+```{r}
+
+kids_df = no_outliers_data %>% 
+  filter(Group!='Adults') %>% 
+  filter(!is.na(Grade)) %>% 
+  mutate(Congruence = if_else(Match=='Match',
+                              'Numerical Congruence', 'Numerical Incongruence'))
+
+# generate age bins based on median split
+age_group_df = kids_df %>% select(Participant, age,Grade)%>% unique() %>% 
+  filter(!is.na(age)) %>% 
+     mutate(age_group = ntile(age, 2)) %>% 
+     mutate(age_group = if_else(age_group==1, 'Younger','Older')) %>% 
+  select(Participant,age_group)
+
+kids_df = kids_df %>% inner_join(age_group_df, by='Participant')
+
+# Get information about age group splits
+
+kids_df %>% 
+  select(Participant,Grade,age_group) %>% 
+  unique() %>% 
+  group_by(age_group,Grade) %>% 
+  summarise(count=n())
+
+kids_df %>% 
+  select(Participant,Grade,age_group,age) %>% 
+  unique() %>% 
+  group_by(age_group) %>% 
+  summarise(count=n(),
+            mean_age = mean(age, na.rm=T))
+  
+```
+
+
+
+
+
+## Descriptive Statistics
+
+### Accuracy
+```{r}
+# Accuracy Stats
+kids_df %>% 
+  group_by(Participant,Grade) %>% 
+  summarise(acc_dots = sum(Array_Correct)/n(),
+            acc_sym = sum(Symb_Correct)/n()) %>% 
+  ungroup() %>% 
+  group_by(Grade) %>% 
+  summarise(mean_acc_dot = mean(acc_dots, na.rm=T),
+            sd_acc_dot = sd(acc_dots, na.rm=T),
+            mean_acc_sym = mean(acc_sym, na.rm=T),
+            sd_acc_sym = sd(acc_sym, na.rm=T))
+
+acc_stats_df = kids_df %>% 
+  group_by(Participant,Grade) %>% 
+  summarise(acc_dots = sum(Array_Correct, na.rm=T)/n(),
+            acc_sym = sum(Symb_Correct,na.rm=T)/n()) %>% 
+  ungroup() %>% 
+  pivot_longer(cols = c('acc_dots','acc_sym'),
+               names_to = 'response_type',
+               values_to = 'acc') %>% 
+  mutate(response_type = as.factor(response_type),
+         Grade = as.factor(Grade))
+
+anova(lmer(acc~Grade*response_type + (1|Participant), data = acc_stats_df))
+anovaBF(acc~Grade*response_type, data = acc_stats_df, whichRandom = 'Participant',whichModels = 'top')
+
+emmeans(lmer(acc~Grade*response_type + (1|Participant), data = acc_stats_df), 
+        list(pairwise ~ Grade*response_type),
+        adjust = "fdr",
+        pbkrtest.limit = 3486)
+
+```
+
+### RT
+
+```{r}
+# RT Stats
+kids_df %>% 
+  filter(Symb_Correct==T) %>% 
+  filter(Array_Correct==T) %>% 
+  group_by(Grade) %>% 
+  summarise(mean_rt_dot = mean(Array_First_RT, na.rm=T),
+            sd_rt_dot = sd(Array_First_RT, na.rm=T),
+            mean_rt_sym = mean(Symb_First_RT, na.rm=T),
+            sd_rt_sym = sd(Symb_First_RT, na.rm=T))
+
+stats_df = kids_df %>% 
+  filter(Symb_Correct==T) %>% 
+  filter(Array_Correct==T)%>% 
+  select(Grade,Array_First_RT, Symb_First_RT, Participant) %>% 
+  pivot_longer(cols = c('Array_First_RT','Symb_First_RT'),
+               names_to = 'response_type',
+               values_to = 'RT') %>% 
+  mutate(response_type = as.factor(response_type),
+         Grade = as.factor(Grade))
+
+anova(lmer(RT~Grade*response_type + (1|Participant), data = stats_df))
+anovaBF(RT~Grade+response_type, data = stats_df, whichRandom = 'Participant',whichModels = 'top')
+# t.test(stats_df$Array_First_RT, stats_df$Symb_First_RT)
+# ttestBF(stats_df$Array_First_RT, stats_df$Symb_First_RT)
+
+```
+
+# Do Children Show Cardinal Priming Effects?
+
+## How does numerical/structural congruence influence cardinal priming effects?
+
+Are there impacts of grouping strucure on cardinal priming, relative to baseline (random no match)
+
+### Statistical Tests
+
+```{r warning = FALSE, echo = FALSE, }
+set.seed(202111208)
+
+stats_df_match = kids_df %>% 
+  filter(Symb_Correct==1) %>% 
+  mutate(Condition_spec = as.factor(Condition_spec),
+         Participant = as.factor(Participant),
+         age_group = as.factor(age_group)) %>% 
+  mutate(Condition_spec = relevel(Condition_spec, ref = 4)) 
+
+
+# Fit the full model without interaction.
+anova(lmer(Symb_First_RT ~ Condition_spec*age_group + (1|Participant), data = stats_df_match))
+BF = anovaBF(Symb_First_RT ~  Condition_spec*age_group,whichRandom = 'Participant',
+             data = stats_df_match, whichModels = "top")
+
+1/BF
+
+fit0 = lmer(Symb_First_RT ~ Condition_spec*age_group + (1|Participant), data = stats_df_match)
+fit1 = lmer(Symb_First_RT ~ Condition_spec+age_group + (1|Participant), data = stats_df_match)
+fit2 = lmer(Symb_First_RT ~ Condition_spec:age_group+age_group + (1|Participant), data = stats_df_match)
+fit3 = lmer(Symb_First_RT ~ Condition_spec:age_group+Condition_spec + (1|Participant), data = stats_df_match)
+
+bayesfactor_models(fit1, fit2, fit3, denominator = fit0)
+
+anovaBF(Symb_First_RT~age_group+Condition_spec, data = stats_df_match, whichRandom = 'Participant',whichModels = 'top')
+
+
+```
+
+## Age Effect Plots
+
+
+### Figure 3A
+
+
+```{r}
+
+DATASET <- do.call(data.frame, aggregate(Symb_First_RT ~ age_group + Condition_spec ,
+                                         data = kids_df %>% 
+                                           mutate(age_group = ntile(age, 2)) %>% 
+                                           mutate(age_group = if_else(age_group==1, 'Younger','Older')) %>% 
+                                           filter(Symb_Correct==1),  
+                                           # filter(Condition!='NoMatch') %>% 
+                                           # filter(Match=='Match') ,
+                                           FUN = function(x) c(Mean = mean(x), 
+                                                               L95 = mean(x) - 1.96 * sd(x) / sqrt(length(x)),
+                                                               U95 = mean(x) + 1.96 * sd(x) / sqrt(length(x)))))
+
+Age_effect_PLOT_Bar = DATASET %>% 
+  mutate(Condition = case_when(Condition_spec=='NoMatch'~ 'Not Matching',
+                               Condition_spec=='Random_SumMatch'~ 'Ungrouped Whole Set Matching',
+                               Condition_spec=='Group_SumMatch'~ 'Grouped Whole Set Matching',
+                               Condition_spec=='Group_PerfectMatch'~ 'Grouped Subgroup Matching')) %>% 
+  mutate(Condition = factor(Condition,levels=c('Not Matching',
+                                               'Ungrouped Whole Set Matching',
+                                               'Grouped Whole Set Matching',
+                                               'Grouped Subgroup Matching'))) %>% 
+                                           mutate(age_group = factor(age_group, levels=c("Younger","Older")))%>%
+  
+ggplot( aes(y = Symb_First_RT.Mean, group=interaction(age_group,Condition),
+            x = age_group,color = Condition, fill = Condition)) +
+geom_col(position='dodge', aes(color = Condition, fill = Condition),alpha=0.8)+
+geom_errorbar(aes(x=age_group,ymin = Symb_First_RT.L95, ymax = Symb_First_RT.U95),
+              position=position_dodge(.9), width=0.2,color='black')+
+scale_color_npg() +
+scale_fill_npg() +
+labs(x = 'Grade', y = '(Correct) Response times (ms)') +
+# scale_y_continuous(breaks = c( 1.00,1.25,1.50,1.75,2.00,2.25,2.50)) +
+# coord_cartesian(ylim = c(0, 2500)) +
+theme_classic()+
+  theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.title = element_text(size=14), #change legend title font size
+        legend.text = element_text(size=14),
+        legend.position='bottom',
+        axis.text=element_text(size=15),
+        axis.title=element_text(size=17))+
+  guides(fill = guide_legend(nrow = 2),
+         color = guide_legend(nrow = 2))
+
+Age_effect_PLOT_Bar 
+
+```
+
+
+
+### Pairwise Comparisons of Grouping Manipulations
+
+```{r warning = FALSE, echo = FALSE, }
+
+emmeans(lmer(Symb_First_RT ~ Condition_spec*age_group+(1|Participant), data = stats_df_match), 
+        list(pairwise ~ Condition_spec),
+        adjust = "fdr",
+        pbkrtest.limit = 8258)
+
+conditions = unique((stats_df_match %>%
+                      mutate(Condition_spec = as.character(Condition_spec)))$Condition_spec)
+
+for(i in 1:length(conditions)){
+  for(j in i:length(conditions)){
+    Sys.sleep(0.1)
+    
+    if(i!=j){
+        print(paste(conditions[i], conditions[j]))
+        print(ttestBF(x=subset(stats_df_match, Condition_spec == conditions[i])$Symb_First_RT,
+                      y=subset(stats_df_match, Condition_spec == conditions[j])$Symb_First_RT))
+    }
+  }
+}
+
+
+```
+
+### Grade Comparisons
+```{r warning = FALSE, echo = FALSE, }
+
+emmeans(lmer(Symb_First_RT ~ Condition_spec*age_group + (1|Participant), data = stats_df_match), 
+        list(pairwise ~ age_group),
+        adjust = "fdr",
+        pbkrtest.limit = 3486)
+
+grades = unique((stats_df_match %>%
+                      mutate(Grade = as.character(Grade)))$Grade)
+
+ print(ttestBF(x=subset(stats_df_match, age_group == "Older")$Symb_First_RT,
+                        y=subset(stats_df_match, age_group == "Younger")$Symb_First_RT))
+
+# for(i in 1:length(grades)){
+#   for(j in i:length(grades)){
+#     Sys.sleep(0.1)
+#     
+#     if(i!=j){
+#         print(paste(grades[i], grades[j]))
+#         print(ttestBF(x=subset(stats_df_match, Grade == grades[i])$Symb_First_RT,
+#                       y=subset(stats_df_match, Grade == grades[j])$Symb_First_RT))
+#     }
+#   }
+# }
+
+
+```
+
+
+
+```{r}
+
+# Helper visualization to understand age*condition interaction
+
+test = emmeans(lmer(Symb_First_RT ~ Condition_spec*age_group+(1|Participant), data = stats_df_match), 
+        list(pairwise ~ Condition_spec:age_group),
+        adjust = "bonf",
+        pbkrtest.limit = 7121)
+
+conditions = unique((stats_df_match %>%
+                      mutate(Condition_spec = as.character(Condition_spec)))$Condition_spec)
+
+
+data.frame(test$`pairwise differences of Condition_spec, age_group`) %>% 
+  separate(X1, into=c("pred1","pred2"), sep= ' -' ) %>% 
+  filter(substr(pred1,nchar(pred1), nchar(pred1))==substr(pred2,nchar(pred2),nchar(pred2))) %>% 
+  select(pred1,pred2,estimate, SE, p.value) %>% 
+  mutate(sig = if_else(p.value < 0.05, T, F)) %>% 
+  unite('pair', c("pred1","pred2")) %>% 
+  mutate(Grade = as.factor(substr(pair, nchar(pair),nchar(pair)))) %>% 
+  ggplot(aes(x=pair, y = estimate, alpha=sig))+
+  geom_col()+
+  geom_errorbar(aes(ymin=estimate-SE, ymax=estimate+SE))+
+  theme(axis.text.x = element_text(angle = 90, vjust = 0.5, hjust=1))+
+  facet_grid(Grade~.)
+  
+# Younger: Perfect different from rest. No difference between the other three
+# Older: Matching arrays differ from no match arrays
+
+
+test
+
+
+```
+
+```{r}
+
+grades=c("Older","Younger")
+
+for(g in 1:length(grades)){
+  for(i in 1:length(conditions)){
+    for(j in i:length(conditions)){
+      Sys.sleep(0.1)
+  
+      if(i!=j){
+        print(grades[g])
+          print(paste(conditions[i], conditions[j]))
+          print(ttestBF(x=subset(stats_df_match, Condition_spec == conditions[i]& age_group == grades[g])$Symb_First_RT,
+                        y=subset(stats_df_match, Condition_spec == conditions[j]& age_group == grades[g])$Symb_First_RT))
+      }
+    }
+  }
+}
+
+
+```
+
+
+
+
+# How does SMARTE relate to priming effects in kids?
+
+```{r}
+
+# Set up data for estimating individual priming effects
+ind_data = kids_df %>% 
+  filter(Symb_Correct==1) %>% 
+  select(Participant, Match, Condition_spec, Symb_First_RT,Grade, age) %>% 
+  mutate(NoMatch_dummy = case_when(Condition_spec == 'NoMatch'~ 1,
+                                          Condition_spec == 'NoMatch'~ 1,
+                                          T~0),
+         Match_dummy = case_when(Condition_spec == 'Group_SumMatch'~ 1,
+                                          Condition_spec == 'Random_SumMatch'~ 1,
+                                          T~0),
+         Group_SumMatch_dummy = if_else(Condition_spec == 'Group_SumMatch', 1, 0),
+         Random_SumMatch_dummy = if_else(Condition_spec == 'Random_SumMatch',1,0),
+         Group_PerfectMatch_dummy = if_else(Condition_spec == 'Group_PerfectMatch', 1, 0),
+         Condition_spec = relevel(as.factor(Condition_spec),ref=4),
+         Match = relevel(as.factor(Match),ref=2),
+         Symb_First_RT = log(Symb_First_RT))%>% 
+  mutate(Condition_spec = case_when(Condition_spec == 'Random_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_SumMatch' ~ 'Match',
+                                    Condition_spec == 'Random_SumMatch' ~ 'Match',
+                                    T~Condition_spec),
+         grade_num = if_else(Grade=='K',0,as.numeric(Grade))) 
+
+
+
+mod0 = lmer(Symb_First_RT ~Match  +(1+Match|Participant),
+            data = ind_data,REML=F,
+            control = lmerControl(
+                           optimizer ='Nelder_Mead'))
+
+summary(mod0)
+
+# Merge data with smarte and estimates of priming effects
+kids_df_smarte = kids_df %>% 
+  inner_join(ranef(mod0)$Participant %>% 
+                    as.data.frame() %>% 
+                    rownames_to_column("Participant") %>% 
+                    mutate(
+                           priming_effectMatch =  -1*(-0.10207+(MatchMatch))),
+             by = 'Participant') %>% 
+  inner_join(symbolic_smarte_scores, by=c('Participant')) %>% 
+  inner_join(group_rcs_df, by=c("Participant")) %>% 
+  inner_join(symbolic_module_scores, by=c("Participant"))
+
+
+```
+
+### Test-retest reliability of priming effects
+```{r}
+
+
+ind_data_session_1 = kids_df %>% 
+  group_by(Participant) %>% 
+  mutate(trial_num = row_number(),
+         Session = if_else(Session=='1','001',Session)) %>% 
+  ungroup() %>% 
+  filter(Session=='001') %>% 
+  filter(Symb_Correct==1) %>% 
+  select(Participant, Match, Condition_spec, Symb_First_RT,Grade, age) %>% 
+  mutate(NoMatch_dummy = case_when(Condition_spec == 'NoMatch'~ 1,
+                                          Condition_spec == 'NoMatch'~ 1,
+                                          T~0),
+         Match_dummy = case_when(Condition_spec == 'Group_SumMatch'~ 1,
+                                          Condition_spec == 'Random_SumMatch'~ 1,
+                                          T~0),
+         Group_SumMatch_dummy = if_else(Condition_spec == 'Group_SumMatch', 1, 0),
+         Random_SumMatch_dummy = if_else(Condition_spec == 'Random_SumMatch',1,0),
+         Group_PerfectMatch_dummy = if_else(Condition_spec == 'Group_PerfectMatch', 1, 0),
+         Condition_spec = relevel(as.factor(Condition_spec),ref=4),
+         Match = relevel(as.factor(Match),ref=2),
+         Symb_First_RT = log(Symb_First_RT))%>% 
+  mutate(Condition_spec = case_when(Condition_spec == 'Random_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_SumMatch' ~ 'Match',
+                                    Condition_spec == 'Random_SumMatch' ~ 'Match',
+                                    T~Condition_spec),
+         grade_num = if_else(Grade=='K',0,as.numeric(Grade))) 
+
+mod1 = lmer(Symb_First_RT ~Match  +(1+Match|Participant),
+            data = ind_data_session_1,REML=F,
+            control = lmerControl(
+                           optimizer ='Nelder_Mead'))
+
+ind_data_session_2 = kids_df %>% 
+  group_by(Participant) %>% 
+  mutate(trial_num = row_number()) %>% 
+  ungroup() %>% 
+  filter(Session=='002') %>% 
+  filter(Symb_Correct==1) %>% 
+  select(Participant, Match, Condition_spec, Symb_First_RT,Grade, age) %>% 
+  mutate(NoMatch_dummy = case_when(Condition_spec == 'NoMatch'~ 1,
+                                          Condition_spec == 'NoMatch'~ 1,
+                                          T~0),
+         Match_dummy = case_when(Condition_spec == 'Group_SumMatch'~ 1,
+                                          Condition_spec == 'Random_SumMatch'~ 1,
+                                          T~0),
+         Group_SumMatch_dummy = if_else(Condition_spec == 'Group_SumMatch', 1, 0),
+         Random_SumMatch_dummy = if_else(Condition_spec == 'Random_SumMatch',1,0),
+         Group_PerfectMatch_dummy = if_else(Condition_spec == 'Group_PerfectMatch', 1, 0),
+         Condition_spec = relevel(as.factor(Condition_spec),ref=4),
+         Match = relevel(as.factor(Match),ref=2),
+         Symb_First_RT = log(Symb_First_RT))%>% 
+  mutate(Condition_spec = case_when(Condition_spec == 'Random_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_NoMatch'~ 'NoMatch',
+                                    Condition_spec == 'Group_SumMatch' ~ 'Match',
+                                    Condition_spec == 'Random_SumMatch' ~ 'Match',
+                                    T~Condition_spec),
+         grade_num = if_else(Grade=='K',0,as.numeric(Grade))) 
+
+mod2 = lmer(Symb_First_RT ~Match  +(1+Match|Participant),
+            data = ind_data_session_2,REML=F,
+            control = lmerControl(
+                           optimizer ='Nelder_Mead'))
+
+
+test= ranef(mod1)$Participant %>% 
+                    as.data.frame() %>% 
+                    rownames_to_column("Participant") %>% 
+                    mutate(
+                           priming_effectMatch1 =(MatchMatch)) %>%
+  select(Participant, priming_effectMatch1) %>% 
+  inner_join(ranef(mod2)$Participant %>% 
+                    as.data.frame() %>% 
+                    rownames_to_column("Participant") %>% 
+                    mutate(
+                           priming_effectMatch2 =(MatchMatch)) %>%
+  select(Participant, priming_effectMatch2),by='Participant') 
+
+  cor.test(test$priming_effectMatch1, test$priming_effectMatch2)
+
+```
+
+
+### Figure 3B 
+
+```{r}
+
+prime_plot = kids_df_smarte %>% 
+  select(priming_effectMatch,Grade,SMARTE_rcs_Fluency) %>% 
+  unique() %>% 
+  mutate(`Single-Digit Fluency Declile` = as.factor(ntile(SMARTE_rcs_Fluency,10)))%>% 
+  ggplot(aes(x=priming_effectMatch, 
+             y = `Single-Digit Fluency Declile`, 
+             fill = `Single-Digit Fluency Declile`)) +
+  geom_density_ridges()+
+  theme_bw()+
+  xlab('Numerical Congruence Effect')+
+  scale_color_observable() +
+  scale_fill_observable() +
+  theme_bw()+
+  theme(legend.position="none",
+          axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+
+prime_plot
+
+```
+
+### Figure 3
+
+```{r}
+
+(Age_effect_PLOT_Bar|prime_plot )+
+  plot_annotation(tag_levels='A')  & 
+  theme(plot.tag = element_text(size = 25))
+
+```
+
+
+
+## Does SMARTE relate to priming?
+
+```{r}
+
+# Fit regression models to understand what variables predict priming effects
+
+scale_this <- function(x) as.vector(scale(x))
+
+priors = c(prior(normal(0, 10), class = "b"))
+
+reg_data = kids_df_smarte %>% 
+  mutate(priming_effect = priming_effectMatch,
+         SMARTE_rcs_Fluency = scale(SMARTE_rcs_Fluency),
+         SMARTE_rcs_Recall = scale(SMARTE_rcs_Recall),
+         rcs_Subitizing = scale(rcs_Subitizing),
+         grade_c = case_when(Grade=='K'~0,
+                             T ~ as.numeric(Grade)))%>%
+            mutate(priming_effect=scale(priming_effect))%>% 
+             select(priming_effect, grade_c, age, SMARTE_rcs_Fluency,SMARTE_rcs_Recall,
+                    rcs_Subitizing,rcs_Groupitizing,Participant) %>% 
+             unique() %>% drop_na()
+
+
+fit_no_group <- brm(priming_effect ~  SMARTE_rcs_Fluency+SMARTE_rcs_Recall + rcs_Subitizing + age , 
+           data = reg_data ,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+fit_no_sub <- brm(priming_effect ~  SMARTE_rcs_Fluency+SMARTE_rcs_Recall+ rcs_Groupitizing+ age , 
+           data = reg_data ,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+fit_no_flu <- brm(priming_effect ~ rcs_Subitizing+ SMARTE_rcs_Recall+ rcs_Groupitizing + age , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_no_recall <- brm(priming_effect ~ rcs_Subitizing+ rcs_Groupitizing + age , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+# 
+fit_no_grade = brm(priming_effect ~ SMARTE_rcs_Fluency+SMARTE_rcs_Recall+ rcs_Subitizing+rcs_Groupitizing + age ,
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+# fit_no_age = brm(priming_effect ~ SMARTE_rcs_Fluency+SMARTE_rcs_Recall+ rcs_Subitizing+rcs_Groupitizing  + grade_c, 
+#            data = reg_data ,
+#           family = gaussian(), prior = priors, sample_prior=T)
+```
+
+
+```{r}
+
+
+fit_0 = brm(priming_effect ~ 1, 
+           data = reg_data ,
+          family = gaussian(),  sample_prior=T)
+
+fit_1 = brm(priming_effect ~ rcs_Groupitizing, 
+           data = reg_data ,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_2 = brm(priming_effect ~ rcs_Groupitizing  + rcs_Subitizing, 
+           data = reg_data ,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_3 = brm(priming_effect ~ SMARTE_rcs_Fluency+ rcs_Subitizing+rcs_Groupitizing  , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_4 = brm(priming_effect ~ SMARTE_rcs_Recall + SMARTE_rcs_Fluency+ rcs_Subitizing+rcs_Groupitizing  , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_5 = brm(priming_effect ~ age + SMARTE_rcs_Fluency+ rcs_Subitizing+rcs_Groupitizing  , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+
+```
+
+
+```{r}
+
+
+
+
+test_wald(fit_0, fit_1)
+test_wald(fit_1, fit_2)
+test_wald(fit_3, fit_2)
+test_wald(fit_3, fit_4)
+test_wald(fit_3, fit_5)
+
+
+
+```
+
+
+### Figure 4A
+
+```{r}
+# Fit the reduced model using brms
+
+
+reg_plot_kids = (summary(fit_5))$fixed %>% 
+  rownames_to_column('Predictor') %>% 
+  mutate(Predictor = case_when(Predictor == 'rcs_Subitizing' ~ 'Subitizing',
+                              Predictor == 'rcs_Groupitizing'~ 'Groupitizing',
+                              Predictor == 'SMARTE_rcs_Fluency'~ 'Single-Digit Fluency',
+                              Predictor == 'SMARTE_rcs_Recall'~ 'Mixed-Digit Arithmetic',
+                              Predictor == 'age' ~ 'Age',
+                              Predictor == 'grade_c' ~ 'Grade',
+                              T ~ Predictor)) %>% 
+  filter(Predictor != 'Intercept') %>% 
+  # arrange(Estimate) %>%    # First sort by val. This sort the dataframe but NOT the factor levels
+  mutate(Predictor=factor(Predictor, levels=Predictor), # This trick update the factor levels
+         # sig = `Pr(>|t|)` < 0.05
+         ) %>%   
+  ggplot(aes(x=Estimate, y = Predictor))+
+  geom_point()+
+  ylab("")+
+  geom_linerange(aes(xmin=`l-95% CI`, xmax=`u-95% CI`))+
+  geom_vline(xintercept = 0, linetype = 3, alpha=0.5)+
+  xlab("Regression Coefficient")+
+  theme_classic()+
+  guides(alpha='none')+
+  theme(axis.text=element_text(size=12),
+        axis.title=element_text(size=14))
+
+
+```
+
+
+### Does Priming Effect Mediate the relationship between groupitizing and fluency?
+
+
+
+```{r}
+
+test_med = kids_df_smarte %>% 
+  filter(Symb_Correct==T) %>% 
+  group_by(Participant) %>% 
+  mutate(mean_symb_rt = mean(Symb_First_RT, na.rm=T))%>% 
+  mutate(priming_effect = priming_effectMatch) %>% 
+  select(priming_effect, Grade, age, Participant, SMARTE_rcs_Fluency,
+         SMARTEScore_Recall,rcs_Groupitizing, rcs_Subitizing,rcs_Random,
+         mean_symb_rt)%>% 
+  unique() %>% 
+  ungroup() %>%
+  dplyr::mutate(across(c('rcs_Subitizing', 'rcs_Groupitizing', 'SMARTE_rcs_Fluency', 'SMARTEScore_Recall','priming_effect','rcs_Random'),  scale))
+
+# Fit Bayesian mediation model in brms
+f1 <- bf(priming_effect ~   rcs_Groupitizing  + rcs_Subitizing + age)
+f2 <- bf(SMARTE_rcs_Fluency ~ priming_effect + rcs_Groupitizing + rcs_Subitizing + age)
+m2 <- brm(f1 + f2 + set_rescor(FALSE),
+          data = test_med, refresh = 0, sample_prior=T,seed = 42)
+
+mediation(m2, sims=1000, ci=.95)
+
+
+# Fit Bayesian mediation model in brms -- random enumeration as mediator?
+f1 <- bf(rcs_Random ~   rcs_Groupitizing + rcs_Subitizing +  age)
+f2 <- bf(SMARTE_rcs_Fluency ~ rcs_Random + rcs_Groupitizing + rcs_Subitizing + age)
+m3 <- brm(f1 + f2 + set_rescor(FALSE), data = test_med, refresh = 0, sample_prior=T,
+          seed = 42)
+
+mediation(m3, sims=1000, ci=.95)
+```
+
+
+### Figure 4B
+
+```{r}
+
+med_plot_kids =  ggplot() +
+  geom_segment(aes(x = 1.5, y = 0.9, xend = 2.1, yend = 1.3), 
+               arrow = arrow(length = unit(0.3, "cm"))) + # X to M
+  geom_segment(aes(x = 2.1, y = 1.3, xend = 2.7, yend = 0.9), 
+               arrow = arrow(length = unit(0.3, "cm"))) + # M to Y
+  geom_segment(aes(x = 1.8, y =  0.85, xend = 2.4, yend = 0.85),
+               arrow = arrow(length = unit(0.3, "cm"))) + # X to Y
+  geom_rect(aes(xmin = 1.2, xmax = 1.8, ymin = 0.8, ymax = 0.9), 
+            fill = 'white', color='black') + # Rectangle for X
+  geom_rect(aes(xmin = 1.8, xmax = 2.4, ymin = 1.3, ymax = 1.4), 
+            fill = 'white', color='black') + # Rectangle for M
+  geom_rect(aes(xmin = 2.4, xmax = 3, ymin = 0.8, ymax = 0.9), 
+            fill = 'white', color='black') + # Rectangle for Y
+  geom_text(aes(x = 1.5, y = 0.85, label = "Groupitizing Ability")) +
+  geom_text(aes(x = 2.1, y = 1.35, label = "Priming Effect")) +
+  geom_text(aes(x = 2.7, y = 0.85, label = "Single-Digit Fluency")) + # c = c' + ab
+  geom_text(aes(x = 1.8, y = 1.1, label = "0.374"),hjust = 1.3) + # a
+  geom_text(aes(x = 2.4, y = 1.1, label = "0.671"),hjust = -0.3) + # mediator effect (b)
+  geom_text(aes(x = 2.1, y = 0.89, label = "c = 0.626")) + # total effect (c)
+  geom_text(aes(x = 2.1, y = 0.81, label = "c' = 0.375")) + # direct effect (c')
+  theme_void()
+
+## Make regression + mediation plot
+(reg_plot_kids | med_plot_kids) +
+  plot_annotation(tag_levels='A')  & 
+  theme(plot.tag = element_text(size = 25))
+
+
+```
+
+
+
+# Supplemental Figures
+## Supplemental Figure 1
+
+```{r}
+
+no_outliers_data_smarte %>% 
+  ggplot(aes(x=rcs_Groupitizing, y = Grade, fill = Grade)) +
+  geom_density_ridges()+
+  theme_bw()+
+  xlab('Individual Groupitizing Skill (Correct Responses per Minute)')+
+  scale_color_d3() +
+  scale_fill_d3() +
+  theme_bw()+
+  theme(legend.position = "top")
+
+```

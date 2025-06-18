@@ -1,0 +1,109 @@
+---
+title: "Bootstrap Time Point Comparison"
+output: html_document
+date: "2025-06-17"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+library(ggpubr)
+require(readxl)
+require(dplyr)
+require(ggplot2)
+require(ggsci)
+library(tidyverse)
+library(psych)
+library(reshape2)
+select = dplyr::select
+
+```
+
+# Load Data
+
+```{r}
+third_df = read_csv("clean_trial_data_full.csv") %>% 
+    mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7","A")))  %>% 
+  mutate(year = as.character(format(as.Date(Date.x, format="%d/%m/%Y"),"%Y")),
+         match = if_else(Condition=='NoMatch','NoMatch','Match')) %>% 
+  filter(Group!='Adults') %>% 
+  filter(!is.na(Grade)) %>% 
+  mutate(Congruence = if_else(Match=='Match',
+                              'Numerical Congruence', 'Numerical Incongruence')) %>% 
+  filter(Grade=='3')  %>% 
+  select(Participant, year,Symb_Submit_RT,Symb_Correct) %>% 
+  group_by(Participant, year) %>% 
+  summarise(mean_rt = mean(log(Symb_Submit_RT), na.rm=T),
+            acc_sym = sum(Symb_Correct)) %>% 
+  ungroup()
+```
+
+
+# Run Bootstrap test on RT
+
+```{r}
+
+# Generate group sizes
+n_25 = length((third_df %>% filter(year=='2025') %>% select(Participant) %>% unique())$Participant)
+n_22 = length((third_df %>% filter(year=='2022') %>% select(Participant) %>% unique())$Participant)
+
+# compute observed difference
+obs_diff = abs(mean((third_df %>% ungroup() %>% filter(year=='2022'))$mean_rt, na.rm=T) -
+           mean((third_df %>% ungroup() %>% filter(year=='2025'))$mean_rt, na.rm=T))
+
+
+n_boot = 100000
+# Draw all resamples at once
+mat_25 = matrix(sample(third_df$mean_rt, n_25 * n_boot, replace = TRUE), nrow = n_25)
+mat_22 = matrix(sample(third_df$mean_rt, n_22 * n_boot, replace = TRUE), nrow = n_22)
+
+# Compute means per column
+mu_25 = colMeans(mat_25, na.rm=T)
+mu_22 = colMeans(mat_22, na.rm=T)
+
+# Absolute differences
+diffs = abs(mu_22 - mu_25)
+
+# p-value
+p_value = mean(diffs >= obs_diff)
+
+# Compute p-value
+# Results
+cat("Observed group mean difference:", round(obs_diff, 4), "\n")
+cat("Bootstrapped p-value (label-shuffled null):", round(p_value, 4), "\n")
+
+
+
+```
+
+# Run Bootstrap test on Accuracy
+
+```{r}
+
+# compute observed difference
+obs_diff = abs(mean((third_df %>% ungroup() %>% filter(year=='2025'))$acc_sym, na.rm=T) -
+           mean((third_df %>% ungroup() %>% filter(year=='2022'))$acc_sym, na.rm=T))
+
+
+n_boot = 10000
+# Draw all resamples at once
+mat_25 = matrix(sample(third_df$acc_sym, n_25 * n_boot, replace = TRUE), nrow = n_25)
+mat_22 = matrix(sample(third_df$acc_sym, n_22 * n_boot, replace = TRUE), nrow = n_22)
+
+# Compute means per column
+mu_25 = colMeans(mat_25, na.rm=T)
+mu_22 = colMeans(mat_22, na.rm=T)
+
+# Absolute differences
+diffs = abs(mu_22 - mu_25)
+
+# p-value
+p_value = mean(diffs >= obs_diff)
+
+# Compute p-value
+
+# Results
+cat("Observed group mean difference:", round(obs_diff, 4), "\n")
+cat("Bootstrapped p-value (label-shuffled null):", round(p_value, 4), "\n")
+
+```

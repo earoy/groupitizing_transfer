@@ -1,0 +1,261 @@
+---
+title: "Transfer -- Load Data"
+output: html_document
+date: "2025-06-03"
+---
+
+```{r warning = FALSE, include = FALSE, max.height = '100px'}
+#Load libraries.
+
+library(ggpubr)
+require(readxl)
+require(DT)
+require(dplyr)
+require(ggplot2)
+require(ggsci)
+require(lme4)
+require(lmerTest)
+require(multcomp)
+require(emmeans)
+library(tidyverse)
+library(BayesFactor)
+library(bayestestR)
+library(broom)
+library(patchwork)
+library(ggridges)
+library(psych)
+library(brms)
+library(reshape2)
+select <- dplyr::select
+
+
+```
+
+```{r}
+
+blc_demo = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/Transfer/blc_demo_updated.csv') %>% 
+  filter(str_detect(participant_id,'BLC')) %>% 
+  rename_with(~str_remove(., 'chld_'))%>% 
+  select(participant_id, bd, contains('race'))
+  
+eni_demo = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/Transfer/eni_demo.csv')%>% 
+  filter(str_detect(participant_id,'ENI'))%>% 
+  rename_with(~str_remove(., 'adult_')) %>% 
+  rename(bd = dob)%>% 
+  select(participant_id, bd, contains('race'))
+
+test= rbind(blc_demo, eni_demo)
+
+
+# 2: Asian, 3: Native Hawaiian, 4: Black, 5: white, 6: Multiracial, 99: Other
+# test %>% 
+#   filter(participant_id %in% no_outliers_data_full$Participant ) %>% 
+#   pivot_longer(cols=contains('race'),names_to='var', values_to='val') %>% 
+#   select(-bd) %>% 
+#   filter(val==1) %>%
+#   group_by(participant_id) %>% 
+#   mutate(multi = if_else(n()>1, 1, 0)) %>% 
+#   mutate(var = if_else(multi==1, 'race___6',var)) %>%
+#   unique() %>% 
+#   group_by(var) %>% 
+#   summarise(count = round(100*sum(val)/237,2)) %>% 
+#   mutate(tot= sum(count))
+
+```
+
+
+
+```{r warning = FALSE, include = FALSE, max.height = '100px'}
+# Get the current script path and set it as the working directory.
+PATH <- getwd() 
+setwd(PATH) 
+# Read the raw files (and suppress the warnings).
+DATA <- suppressWarnings(read_xlsx(paste0('/Users/ethanroy/Documents/Stanford/EdNeuro/Transfer/TRANSFER.xlsx'), col_types = 'text'))
+SMARTE <- suppressWarnings(read_xlsx(paste0('/Users/ethanroy/Documents/Stanford/EdNeuro/Transfer/SMARTE.xlsx'))) 
+demos = suppressWarnings(read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/synapse_math_games_2025/transfer/data/demos.csv'))
+
+# Set the grouping variables as factors.
+DATA$Grade <- factor(DATA$Grade, levels = c('3', '5', '7', 'A'))
+DATA$Condition <- factor(DATA$Condition, levels = c('NoMatch', 'SumMatch', 'PerfectMatch'))
+DATA$Structure <- as.factor(DATA$Structure)
+DATA$Sum <- as.factor(DATA$Sum)
+DATA$Structure <- as.factor(DATA$Structure)
+DATA$Miniblock <- as.factor(DATA$Miniblock)
+# Set the outcome variables as numeric.
+DATA$Array_Correct <- as.numeric(DATA$Array_Correct)
+DATA$Array_First_RT <- as.numeric(DATA$Array_First_RT)
+DATA$Array_Submit_RT <- as.numeric(DATA$Array_Submit_RT)
+DATA$Array_All_RT <- as.numeric(DATA$Array_All_RT)
+DATA$Symb_Correct <- as.numeric(DATA$Symb_Correct)
+DATA$Symb_First_RT <- as.numeric(DATA$Symb_First_RT)
+DATA$Symb_Submit_RT <- as.numeric(DATA$Symb_Submit_RT)
+DATA$Symb_All_RT <- as.numeric(DATA$Symb_All_RT)
+# Set some SMARTE variables as numeric or factor.
+SMARTE$Type <- as.factor(SMARTE$Type)
+SMARTE$First_RT <- as.numeric(SMARTE$First_RT)
+SMARTE = SMARTE %>% select(-Nervous_Level)
+# Remove some variables that we will not use.
+rm(PATH)
+
+
+incomplete_consent = c("BLC_1056", "BLC_1193", "BLC_1209", "BLC_1240", "BLC_1244",
+                       "BLC_883", "BLC_1229","BLC_285","BLC_540")
+
+# Load K-2 SMARTE data
+smarte_k2 = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/synapse_math_games_2025/smarte/data/clean/smarte_k2_clean.csv') %>% mutate(Module = if_else(Phase=='C', 'Recall',Module)) %>% select(SMARTE %>% names())
+
+# Bind full SMARTE data
+SMARTE = SMARTE %>% 
+  rbind(smarte_k2) %>% 
+  mutate(Correct=as.numeric(Correct))
+
+
+k2_data_clean = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/synapse_math_games_2025/transfer/data/clean/transfer_k2_clean.csv') %>% 
+  mutate(Symb_All_Inputs = as.numeric(substr(Symb_All_Inputs,1,1)),
+         Symb_First_RT = as.numeric(Symb_First_RT),
+         Array_First_RT = as.numeric(Array_First_RT)) %>% 
+  mutate(Symb_Correct = as.numeric(Symb_All_Inputs==Symb_Response),
+         Symb_First_RT = Symb_First_RT,
+         Array_First_RT = Array_First_RT)%>% 
+  filter(Symb_Submit_RT<20) %>% 
+  filter(Array_Submit_RT<20) %>% 
+  filter((Participant %in% incomplete_consent)==F)
+
+
+```
+
+
+
+
+```{r, include=F}
+
+
+no_outliers = DATA %>%
+  group_by(Participant,Grade) %>%
+  summarise(mean_RT = mean(Symb_First_RT, na.rm=T)) %>% 
+  ungroup() %>% 
+  group_by(Grade) %>% 
+  filter(!(abs(mean_RT - median(mean_RT)) > 3*sd(mean_RT)))
+
+no_outliers_data = DATA %>%
+  filter(Participant %in% no_outliers$Participant) %>%
+  mutate(Group = if_else(Grade=='A','Adults','Children'),
+         Match = if_else(Condition == "NoMatch", "No Match", "Match")) %>% 
+  unite(Condition_spec, c('Structure','Condition'), remove=F) 
+
+length(unique(no_outliers_data$Participant))
+length(unique(DATA$Participant))
+
+DATA = DATA %>% 
+  mutate(Group = if_else(Grade=='A','Adults','Children'))
+
+no_outliers_data_full = k2_data_clean %>% 
+  mutate(Group='Children',
+         Match = if_else(Condition == "NoMatch", "No Match", "Match")) %>% 
+  unite(Condition_spec, c('Structure','Condition'), remove=F) %>% 
+  select(no_outliers_data %>% names()) %>% 
+  rbind(no_outliers_data) %>% 
+  mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7",'A'))) %>% 
+  filter(!is.na(Grade)) %>% 
+  inner_join(demos, by='Participant') %>% 
+  mutate(Condition_spec = if_else(str_detect(Condition_spec,'NoMatch'),'NoMatch',Condition_spec))
+
+length(unique(no_outliers_data_full$Participant))
+
+no_outliers_data_full %>% 
+  select(Participant, Grade, age,sex) %>% 
+  unique() %>% 
+  mutate(female = if_else(str_detect(str_to_lower(sex),'f'),1,0)) %>% 
+  group_by(Grade) %>%
+  ungroup() %>% 
+  group_by(Grade) %>% 
+  dplyr::summarise(count = n(),
+                   n_female = sum(female,na.rm=T),
+                   Age = mean(age, na.rm=T),
+                   sd_age = sd(age, na.rm=T))
+
+# no_outliers_data_full %>% 
+#   write_csv("clean_trial_data_full.csv")
+
+
+demos
+
+```
+
+
+
+
+```{r}
+
+## Structural Congruency Effect (Random Match - Perfect Match)
+
+diff_df = no_outliers_data_full %>% 
+  filter(Symb_Correct==1) %>% 
+  filter(Condition != 'NoMatch') %>% 
+  filter(Condition_spec != 'Group_SumMatch') %>%
+  select(Participant, Symb_First_RT,Condition_spec,Grade) %>% 
+  group_by(Participant, Condition_spec,Grade) %>% 
+  summarise(mean_rt = mean(Symb_First_RT, na.rm=T)) %>% 
+  pivot_wider(names_from = 'Condition_spec', values_from = 'mean_rt', 
+              names_prefix = 'rt_') %>% 
+  mutate(priming_effect_diff = rt_Random_SumMatch - rt_Group_PerfectMatch) %>% 
+  select(Participant, priming_effect_diff)
+
+## SMARTE performance excluding Enumeration
+symbolic_smarte_scores = SMARTE %>% 
+  filter(Module!='Enumeration') %>%
+  filter(Type!='Practice') %>% 
+  group_by(Participant) %>%
+  summarise(SMARTEScore=sum(Correct,na.rm=T),
+            SMARTERT = mean(First_RT, na.rm=T),
+            SMARTE_rcs = 60*sum(Correct, na.rm=T)/sum(First_RT, na.rm=T))
+
+symbolic_module_scores = SMARTE %>% 
+  filter(Module!='Enumeration') %>%
+  filter(Type!='Practice') %>% 
+  group_by(Participant,Module) %>%
+  summarise(SMARTEScore=sum(Correct),
+            SMARTERT = mean(First_RT, na.rm=T),
+            SMARTE_rcs = 60*sum(Correct, na.rm=T)/sum(First_RT, na.rm=T)) %>% 
+  pivot_wider(names_from = Module, values_from = c("SMARTEScore","SMARTERT","SMARTE_rcs"))
+
+subitizing_df = SMARTE %>% 
+  filter(Module=='Enumeration') %>%
+  filter(Module!='Practice') %>%
+  filter(Type=='Subitizing')%>% 
+  group_by(Participant) %>%
+  summarise(Subitizing = mean(as.numeric(First_RT),na.rm=T))
+
+
+group_rcs_df = SMARTE %>% 
+  filter(Module=='Enumeration') %>%
+  filter(Type!='Practice') %>%  
+  # filter(Type!='Random') %>% 
+  # filter(Type!='Subitizing') %>% 
+  mutate(Type = case_when(Type == 'Subitizing' ~ 'Subitizing',
+                          Type == 'Random' ~ 'Random',
+                          T ~ "Groupitizing")) %>% 
+  group_by(Participant,Type,Grade) %>%
+  summarise(tot_cor=sum(Correct),
+            rt = mean(First_RT, na.rm=T),
+            rcs = 60*sum(Correct, na.rm=T)/sum(First_RT, na.rm=T)) %>% 
+  pivot_wider(names_from = 'Type', values_from = c("tot_cor","rt","rcs")) %>%
+  group_by(Grade) %>% 
+  mutate(rcs_Groupitizing_std = scale(rcs_Groupitizing)) %>% 
+  ungroup() %>% 
+  select(Participant, rcs_Random, rcs_Subitizing, rcs_Groupitizing, rcs_Groupitizing_std) 
+
+no_outliers_data_smarte = no_outliers_data_full %>% 
+  inner_join(symbolic_smarte_scores, by='Participant') %>% 
+  inner_join(subitizing_df, by='Participant') %>% 
+  inner_join(symbolic_module_scores, by='Participant') %>% 
+  inner_join(group_rcs_df, by='Participant') %>% 
+  inner_join(diff_df, by='Participant')
+  
+
+
+# no_outliers_data_smarte %>% 
+#   select(-rcs_Groupitizing_std) %>% 
+#   write_csv("clean_trial_data_smarte_full.csv")
+
+```

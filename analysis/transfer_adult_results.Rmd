@@ -1,0 +1,474 @@
+---
+title: "Transfer -- Adult Sample"
+output: html_document
+date: "2025-06-03"
+---
+
+```{r warning = FALSE, include = FALSE, max.height = '100px'}
+#Load libraries.
+
+library(ggpubr)
+require(readxl)
+require(DT)
+require(dplyr)
+require(ggplot2)
+require(ggsci)
+require(lme4)
+require(lmerTest)
+require(multcomp)
+require(emmeans)
+library(tidyverse)
+library(BayesFactor)
+library(bayestestR)
+library(broom)
+library(patchwork)
+library(ggridges)
+library(psych)
+library(brms)
+library(reshape2)
+select <- dplyr::select
+
+
+```
+
+
+# Load Data
+
+```{r}
+no_outliers_data_smarte = read_csv("clean_trial_data_smarte_full.csv") %>% 
+    mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7","A"))) 
+
+no_outliers_data = read_csv("clean_trial_data_full.csv") %>% 
+    mutate(Grade = factor(Grade, levels=c("K","1","2","3","4","5","7","A"))) 
+
+
+adult_df = no_outliers_data %>% 
+  filter(Group=='Adults') %>% 
+  mutate(Congruence = if_else(Match=='Match',
+                              'Numerical Congruence', 'Numerical Incongruence')) %>% 
+  inner_join(demos, by='Participant')
+
+```
+
+# Descriptive Statistics
+
+```{r}
+
+# Accuracy Stats
+adult_df %>% 
+  group_by(Participant) %>% 
+  summarise(acc_dots = sum(Array_Correct)/n(),
+            acc_sym = sum(Symb_Correct)/n()) %>% 
+  ungroup() %>% 
+  summarise(mean_acc_dot = mean(acc_dots, na.rm=T),
+            sd_acc_dot = sd(acc_dots, na.rm=T),
+            mean_acc_sym = mean(acc_sym, na.rm=T),
+            sd_acc_sym = sd(acc_sym, na.rm=T))
+
+
+# Accuracy Stats
+adult_df %>% 
+  filter(Symb_Correct==T) %>% 
+  filter(Array_Correct==T) %>% 
+  summarise(mean_rt_dot = mean(Array_First_RT, na.rm=T),
+            sd_rt_dot = sd(Array_First_RT, na.rm=T),
+            mean_rt_sym = mean(Symb_First_RT, na.rm=T),
+            sd_rt_sym = sd(Symb_First_RT, na.rm=T))
+
+stats_df = adult_df %>% 
+  filter(Symb_Correct==T) %>% 
+  filter(Array_Correct==T) %>% 
+  mutate(Array_First_RT = as.numeric(Array_First_RT),
+         Symb_First_RT = as.numeric(Symb_First_RT))
+
+t.test(stats_df$Array_First_RT, stats_df$Symb_First_RT)
+ttestBF(stats_df$Array_First_RT, stats_df$Symb_First_RT)
+
+
+
+```
+
+
+## Do adults show sensitivity to structural congruence in cardinal priming effects?
+
+Are there impacts of grouping strucure on cardinal priming, relative to baseline (random no match)
+
+### Figure 5A
+
+```{r warning = FALSE, echo = FALSE}
+
+
+
+DATASET <- do.call(data.frame, aggregate(Symb_First_RT ~  Condition_spec ,
+                                         data = adult_df %>% 
+                                           filter(Symb_Correct==1),  
+                                           # filter(Condition!='NoMatch') %>% 
+                                           # filter(Match=='Match') ,
+                                           FUN = function(x) c(Mean = mean(x), 
+                                                               L95 = mean(x) - 1.96 * sd(x) / sqrt(length(x)),
+                                                               U95 = mean(x) + 1.96 * sd(x) / sqrt(length(x)))))
+
+
+FIG2A_PLOT_Bar = DATASET %>% 
+  filter(Symb_First_RT.Mean < 2) %>% 
+  mutate(Condition = case_when(Condition_spec=='NoMatch'~ 'Not Matching',
+                               Condition_spec=='Random_SumMatch'~ 'Ungrouped Whole Set Matching',
+                               Condition_spec=='Group_SumMatch'~ 'Grouped Whole Set Matching',
+                               Condition_spec=='Group_PerfectMatch'~ 'Grouped Subgroup Matching')) %>% 
+  mutate(Condition = factor(Condition,levels=c('Not Matching',
+                                               'Ungrouped Whole Set Matching',
+                                               'Grouped Whole Set Matching',
+                                               'Grouped Subgroup Matching')))%>% 
+ggplot( aes(y = Symb_First_RT.Mean,
+            x = Condition,color = Condition, fill = Condition)) +
+geom_col(position='dodge', aes(color = Condition, fill = Condition),alpha=0.8)+
+geom_errorbar(aes(x=Condition, ymin = Symb_First_RT.L95, ymax = Symb_First_RT.U95),
+              position=position_dodge(.9), width=0.2,color='black')+
+scale_color_npg() +
+scale_fill_npg() +
+labs(x = 'Condition', y = '(Correct) Response times (ms)') +
+theme_classic()+
+  theme(legend.key.size = unit(1, 'cm'), #change legend key size
+        legend.title = element_text(size=14), #change legend title font size
+        legend.text = element_text(size=14),
+        legend.position='bottom',
+        axis.text=element_text(size=15),
+        axis.text.x = element_blank(),
+        axis.title=element_text(size=17))+
+  guides(fill = guide_legend(nrow = 2),
+         color = guide_legend(nrow = 2))
+
+FIG2A_PLOT_Bar
+
+```
+#### Statistical Tests
+
+```{r warning = FALSE, echo = FALSE, }
+
+set.seed(202111208)
+
+stats_df_match = adult_df %>% 
+  filter(Symb_Correct==1) %>% 
+  mutate(Condition_spec = as.factor(Condition_spec),
+         Participant = as.factor(Participant))
+
+
+# Fit the full model without interaction.
+summary(aov(Symb_First_RT ~ Condition_spec, data = stats_df_match))
+BF = anovaBF(Symb_First_RT ~  Condition_spec , data = stats_df_match, whichModels = "top")
+
+1/BF
+
+
+emmeans(lm(Symb_First_RT ~ Condition_spec, data = stats_df_match), 
+        list(pairwise ~ Condition_spec),
+        adjust = "fdr",
+        pbkrtest.limit = 3486)
+
+conditions = unique((stats_df_match %>%
+                      mutate(Condition_spec = as.character(Condition_spec)))$Condition_spec)
+
+for(i in 1:length(conditions)){
+  for(j in i:length(conditions)){
+    Sys.sleep(0.1)
+    
+    if(i!=j){
+        print(paste(conditions[i], conditions[j]))
+        print(ttestBF(x=subset(stats_df_match, Condition_spec == conditions[i])$Symb_First_RT,
+                      y=subset(stats_df_match, Condition_spec == conditions[j])$Symb_First_RT))
+    }
+  }
+}
+
+stats_df_match %>% 
+  group_by(Condition_spec) %>% 
+  summarise(mean_rt = mean(Symb_First_RT, na.rm=T),
+            sd_rt = sd(Symb_First_RT, na.rm=T))
+
+```
+
+## Is cardinal priming related to groupitizing skill
+
+Compare difference between match/no-match and relate to groupitizing
+
+
+```{r}
+
+# set up data for individual priming effects model
+ind_data = adult_df %>%
+  filter(Symb_Correct==1) %>%
+  select(Participant, Match, Condition_spec, Symb_First_RT) %>%
+  mutate(NoMatch_dummy = if_else(Match == 'NoMatch', 1, 0),
+         Match_dummy = if_else(Match == 'Match', 1, 0),
+         Match = relevel(as.factor(Match), ref=1),,
+         Symb_First_RT = log(Symb_First_RT))
+
+mod0 = lmer(Symb_First_RT ~ Match + (1|Participant), data = ind_data)
+
+
+mod1 = lmer(Symb_First_RT ~ Match + (Match|Participant), data = ind_data)
+summary(mod1)
+
+
+adult_df_smarte = adult_df %>% 
+  inner_join(ranef(mod1)$Participant %>% 
+                    as.data.frame() %>% 
+                    rownames_to_column("Participant") %>% 
+                    mutate(priming_effect = 0.10466-`MatchNo Match`,
+                           enumeration_effect = 0.28663+`(Intercept)`),
+             by = 'Participant') %>% 
+  inner_join(symbolic_smarte_scores, by='Participant') %>% 
+  inner_join(subitizing_df, by='Participant') %>% 
+  inner_join(symbolic_module_scores, by='Participant') %>% 
+  inner_join(group_rcs_df, by='Participant') %>% 
+  inner_join(diff_df, by='Participant')
+
+summary(mod1)
+
+```
+
+
+
+```{r}
+
+scale_this <- function(x) as.vector(scale(x))
+
+priors = c(prior(normal(0, 10), class = "b"))
+
+reg_data = adult_df_smarte %>% 
+  mutate(priming_effect = scale(priming_effect),
+         SMARTE_rcs_Fluency = scale(SMARTE_rcs_Fluency),
+         SMARTE_rcs_Recall = scale(SMARTE_rcs_Recall),
+         rcs_Subitizing = scale(rcs_Subitizing))%>%
+            mutate(priming_effect=scale(priming_effect))%>% 
+             select(priming_effect, SMARTE_rcs_Fluency,SMARTE_rcs_Recall,
+                    rcs_Subitizing,rcs_Groupitizing) 
+
+fit_no_group <- brm(priming_effect ~  SMARTE_rcs_Fluency+ SMARTE_rcs_Recall+ rcs_Subitizing, 
+           data = reg_data, 
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+fit_no_sub <- brm(priming_effect ~  SMARTE_rcs_Fluency+ SMARTE_rcs_Recall+ rcs_Groupitizing, 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+fit_no_flu <- brm(priming_effect ~ rcs_Subitizing+ SMARTE_rcs_Recall+ rcs_Groupitizing, 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+fit_no_recall = brm(priming_effect ~ SMARTE_rcs_Fluency+ rcs_Subitizing+rcs_Groupitizing, 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+
+fit_adult = brm(priming_effect ~  rcs_Subitizing+rcs_Groupitizing+SMARTE_rcs_Fluency+SMARTE_rcs_Recall, 
+           data = reg_data, seed = 42, 
+          family = gaussian(), prior = priors, sample_prior=T)
+
+bayes_factor(fit_adult, fit_no_flu)
+bayes_factor(fit_adult, fit_no_group)
+bayes_factor(fit_adult, fit_no_sub)
+bayes_factor(fit_adult, fit_no_recall)
+
+print(summary(fit_adult), digits=5)
+
+fit_5 = brm(priming_effect ~ SMARTE_rcs_Fluency+ rcs_Subitizing+rcs_Groupitizing  , 
+           data = reg_data,
+          family = gaussian(), prior = priors, sample_prior=T)
+
+```
+### Figure 5B
+
+```{r}
+
+
+model_plot = as.data.frame(summary(fit_5)$fixed)%>% 
+  rownames_to_column('Predictor') %>% 
+  mutate(Predictor = case_when(Predictor == 'Grade5'~ 'Grade 5',
+                              Predictor == 'Grade7'~ 'Grade 7',
+                              Predictor == 'GradeA'~ 'Adult',
+                              Predictor == 'rcs_Subitizing' ~ 'Subitizing',
+                              Predictor == 'SMARTE_rcs_Recall' ~ 'Mixed-Digit Arithmetic',
+                              Predictor == 'rcs_Groupitizing'~ 'Groupitizing',
+                              Predictor == 'SMARTE_rcs_Fluency'~ 'Single-Digit Fluency',
+                              Predictor == 'SMARTEScore_Recall'~ 'Mixed-Digit Arithmetic',
+                              T ~ Predictor)) %>% 
+  filter(Predictor != 'Intercept') %>%
+  # arrange(Estimate) %>%    # First sort by val. This sort the dataframe but NOT the factor levels
+  mutate(Predictor=factor(Predictor, levels=Predictor), # This trick update the factor levels
+         # sig = `Pr(>|t|)` < 0.05
+         ) %>%   
+  ggplot(aes(x=Estimate, y = Predictor))+
+  geom_point()+
+  geom_linerange(aes(xmin=`l-95% CI`, xmax=`u-95% CI`))+
+  geom_vline(xintercept = 0, linetype = 3, alpha=0.5)+
+  xlab("Regression Coefficient")+
+  theme_classic()+
+  guides(alpha='none')+
+  theme(axis.text.y = element_text(size=11))
+
+model_plot
+
+```
+
+
+## Does priming effect mediate the relationship between groupitizing and single-digit fluency?
+
+```{r}
+## Standardize these predictors. 
+mod_data = adult_df_smarte %>% 
+  select(priming_effect, Grade, Participant, SMARTE_rcs_Fluency,rcs_Random,
+         Subitizing,SMARTEScore_Recall,rcs_Groupitizing, rcs_Subitizing)%>% 
+  ungroup() %>%
+  dplyr::mutate(across(c('rcs_Subitizing', 'rcs_Groupitizing', 'SMARTE_rcs_Fluency', 'SMARTEScore_Recall','priming_effect','rcs_Random'),  scale))
+
+
+# Fit Bayesian mediation model in brms
+f1 <- bf(priming_effect ~   rcs_Groupitizing +rcs_Subitizing )
+f2 <- bf(SMARTE_rcs_Fluency ~ priming_effect + rcs_Groupitizing +rcs_Subitizing)
+m2 <- brm(f1 + f2 + set_rescor(FALSE), data = mod_data, refresh = 0, sample_prior=T,
+          seed = 42)
+
+mediation(m2, sims=1000, ci=.95)
+
+
+# Fit Bayesian mediation model in brms
+f1 <- bf(rcs_Random ~   rcs_Groupitizing +rcs_Subitizing)
+f2 <- bf(SMARTE_rcs_Fluency ~ rcs_Random + rcs_Groupitizing +rcs_Subitizing)
+m3 <- brm(f1 + f2 + set_rescor(FALSE), data = mod_data %>% unique(), refresh = 0, sample_prior=T,
+          seed = 42)
+
+mediation(m3, sims=1000, ci=.95)
+
+m3
+
+
+```
+
+### Figure 5C
+
+```{r}
+
+med_plot =  ggplot() +
+  geom_segment(aes(x = 1.5, y = 0.9, xend = 2.1, yend = 1.3), 
+               arrow = arrow(length = unit(0.3, "cm"))) + # X to M
+  geom_segment(aes(x = 2.1, y = 1.3, xend = 2.7, yend = 0.9), 
+               arrow = arrow(length = unit(0.3, "cm"))) + # M to Y
+  geom_segment(aes(x = 1.8, y =  0.85, xend = 2.4, yend = 0.85),
+               arrow = arrow(length = unit(0.3, "cm"))) + # X to Y
+  geom_rect(aes(xmin = 1.2, xmax = 1.8, ymin = 0.8, ymax = 0.9), 
+            fill = 'white', color='black') + # Rectangle for X
+  geom_rect(aes(xmin = 1.8, xmax = 2.4, ymin = 1.3, ymax = 1.4), 
+            fill = 'white', color='black') + # Rectangle for M
+  geom_rect(aes(xmin = 2.4, xmax = 3, ymin = 0.8, ymax = 0.9), 
+            fill = 'white', color='black') + # Rectangle for Y
+  geom_text(aes(x = 1.5, y = 0.85, label = "Groupitizing Ability")) +
+  geom_text(aes(x = 2.1, y = 1.35, label = "Priming Effect")) +
+  geom_text(aes(x = 2.7, y = 0.85, label = "Single-Digit Fluency")) + # c = c' + ab
+  geom_text(aes(x = 1.8, y = 1.1, label = "0.406"),hjust = 1.3) + # a
+  geom_text(aes(x = 2.4, y = 1.1, label = "0.502"),hjust = -0.3) + # mediator effect (b)
+  geom_text(aes(x = 2.1, y = 0.89, label = "c = 0.406")) + # total effect (c)
+  geom_text(aes(x = 2.1, y = 0.81, label = "c' = 0.202")) + # direct effect (c')
+  theme_void()
+
+med_plot
+
+```
+
+## Figure 5 Full
+
+```{r}
+
+(FIG2A_PLOT_Bar | model_plot/med_plot) +
+  plot_annotation(tag_levels='A')  & 
+  theme(plot.tag = element_text(size = 25))
+
+```
+
+
+## Supplemental Figure 2
+
+```{r}
+
+adult_df_smarte_cor_plot = adult_df_smarte %>% 
+  select(-Subitizing) %>% 
+  rename( `Priming Effect` = priming_effect,
+          `Single-Digit Fluency` = SMARTE_rcs_Fluency,
+          `Multi-Digit Fluency` = SMARTE_rcs_Recall,
+          Groupitizing = rcs_Groupitizing,
+          Subitizing = rcs_Subitizing)
+
+
+corr_cols = c('Priming Effect', 'Single-Digit Fluency',
+         'Multi-Digit Fluency', 'Groupitizing','Subitizing')
+
+# Initialize an empty matrix
+n <- length(corr_cols)
+result_matrix <- matrix(NA, n, n)
+rownames(result_matrix) <- corr_cols
+colnames(result_matrix) <- corr_cols
+
+for(i in 1:length(corr_cols)){
+  for(j in i:length(corr_cols)){
+  
+    if(i!=j){
+      
+      cor_value = round(cor(adult_df_smarte_cor_plot[[corr_cols[i]]],
+                            adult_df_smarte_cor_plot[[corr_cols[j]]]),3)
+      bf_value = extractBF(correlationBF(adult_df_smarte_cor_plot[[corr_cols[i]]],
+                                         adult_df_smarte_cor_plot[[corr_cols[j]]],
+                                         rscale='medium'))$bf
+      if(bf_value>100){
+        bf_value='BF >100'
+      }
+      # Populate lower triangle with correlation values
+      result_matrix[j, i] <- as.numeric(cor_value)  # Note: (j, i) for lower triangle
+      
+      # Populate upper triangle with Bayes Factors
+      result_matrix[i, j] <- bf_value  # Note: (i, j) for upper triangle
+    }
+    else{
+      result_matrix[i,j] <- 0
+    }
+  }
+}
+
+# Reshape the matrix into a long format
+df_long <- melt(result_matrix, na.rm = TRUE)
+colnames(df_long) <- c("Var1", "Var2", "Value")
+
+# Add a column to differentiate Correlation and Bayes Factor
+df_long$Type <- ifelse(upper.tri(result_matrix, diag = FALSE)[cbind(match(df_long$Var1,
+                                                                          rownames(result_matrix)), 
+                                                                    match(df_long$Var2,
+                                                                          colnames(result_matrix)))],
+                       "BF", "Correlation")
+
+df_long = df_long %>% 
+  mutate(cor_val = if_else(Type=='Correlation',as.numeric(Value),NA))
+
+# %>% 
+#   arrange(Var1,Var2,Type)
+
+# Plot the heatmap
+cor_plot = ggplot(data = df_long, aes(x = Var2, y = Var1, fill = cor_val)) +
+  geom_tile(alpha=0.75) +
+  geom_text(aes(label = case_when(Type == "BF"~ Value, 
+                                  cor_val==0 ~ " ",
+                                  T~ Value)), 
+            size = 4.5, color = "black") +
+  scale_fill_gradient2(low = "blue", mid = 'white',high = "red",
+                       midpoint = 0, na.value = 'lightgrey',name = "Correlation") +
+  theme_minimal() +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1),
+        axis.text = element_text(size=12)) +
+  labs(x = NULL, y = NULL) +
+  coord_fixed()
+
+
+cor_plot
+
+
+```
