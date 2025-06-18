@@ -98,8 +98,6 @@ SMARTE = SMARTE %>% select(-Nervous_Level)
 rm(PATH)
 
 
-incomplete_consent = c("BLC_1056", "BLC_1193", "BLC_1209", "BLC_1240", "BLC_1244",
-                       "BLC_883", "BLC_1229","BLC_285","BLC_540")
 
 # Load K-2 SMARTE data
 smarte_k2 = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/synapse_math_games_2025/smarte/data/clean/smarte_k2_clean.csv') %>% mutate(Module = if_else(Phase=='C', 'Recall',Module)) %>% select(SMARTE %>% names())
@@ -118,8 +116,7 @@ k2_data_clean = read_csv('/Users/ethanroy/Documents/Stanford/EdNeuro/synapse_mat
          Symb_First_RT = Symb_First_RT,
          Array_First_RT = Array_First_RT)%>% 
   filter(Symb_Submit_RT<20) %>% 
-  filter(Array_Submit_RT<20) %>% 
-  filter((Participant %in% incomplete_consent)==F)
+  filter(Array_Submit_RT<20)
 
 
 ```
