@@ -1,0 +1,2 @@
+# Groupitizing Transfer
+Analysis code for Groupitizing transfer to mental addition provides a developmental index of the integration of non-symbolic and symbolic arithmetic and mathematical expertise. JavaScript code for the tablet based paradigm is available in the paradigm folder and can be hosted on any web server. Code for recproducing the results reported in the mansucript are found in the analysis directory. You must first run the `transfer_load_data.Rmd` file before running the other `.Rmd` files. 
